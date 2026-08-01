@@ -3,6 +3,8 @@ import cors from 'cors';
 import prisma from './prismaClient.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+// import claude from './claudeClient.js';
+import { critiqueResume } from './claudeClient.js';
 
 // 이 미들웨어는 나중에 로그인한 사용자만 접근 가능한 API에 붙일 예정 
 function authMiddleware(req, res, next) {
@@ -79,6 +81,74 @@ app.post('/auth/login', async (req, res) => {
     });
 
     res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 이력서 첨삭
+app.post('/resumes/critique', authMiddleware, async (req, res) => {
+  try {
+    const { title, content } = req.body;
+
+    if (!content) {
+      return res.status(400).json({ error: '이력서 내용을 입력해주세요.' });
+    }
+
+//     const response = await claude.messages.create({
+//       model: 'claude-sonnet-4-6',
+//       max_tokens: 2048,
+//       system: `당신은 채용 담당자 관점에서 이력서를 첨삭하는 전문가입니다.
+// 다음 기준으로 첨삭해주세요:
+// 1. 문장이 구체적인 수치와 성과 중심으로 되어 있는지
+// 2. 동사로 시작하는 명확한 문장인지
+// 3. 불필요하게 장황하거나 모호한 표현은 없는지
+
+// 반드시 아래 JSON 형식으로만 응답하세요. 다른 설명 없이 JSON만 반환합니다.
+// {
+//   "overallFeedback": "전체적인 총평 (2-3문장)",
+//   "suggestions": [
+//     { "original": "원문 문장", "revised": "수정 제안 문장", "reason": "왜 이렇게 고쳐야 하는지 이유" }
+//   ]
+// }`,
+//       messages: [
+//         { role: 'user', content: `다음 이력서를 첨삭해주세요:\n\n${content}` },
+//       ],
+//     });
+//    const feedbackText = response.content[0].text;
+
+      const feedbackText = await critiqueResume(content);
+
+    // 이력서와 첨삭 결과를 함께 DB에 저장
+    const resume = await prisma.resume.create({
+      data: {
+        userId: req.userId,
+        title: title || '제목 없음',
+        content,
+        feedback: feedbackText,
+      },
+    });
+
+    res.status(201).json({
+      id: resume.id,
+      title: resume.title,
+      content: resume.content,
+      feedback: JSON.parse(feedbackText),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 내 이력서 목록 조회
+app.get('/resumes', authMiddleware, async (req, res) => {
+  try {
+    const resumes = await prisma.resume.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(resumes);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
